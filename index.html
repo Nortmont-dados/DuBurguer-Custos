@@ -789,7 +789,7 @@
      CONEXÃO — preencha estes dois valores (instruções no TUTORIAL)
      ===================================================================== */
   var SHEETS_URL = "";   // URL do App da Web do Apps Script (termina em /exec)
-  var CLIENT_ID  = "";   // ID do cliente OAuth criado no Google Cloud Console
+  var CLIENT_ID  = "646359826891-176bdom8mgnkb1n3k0acu83l9tba01f3.apps.googleusercontent.com";
   /* ===================================================================== */
 
   // Quem pode entrar é decidido no Apps Script, não aqui: qualquer coisa validada apenas no
@@ -3104,27 +3104,52 @@
     document.getElementById("appWrap").style.display = "";
   }
 
-  async function aoReceberCredencial(resposta){
-    sessao.idToken = resposta.credential;
-    loginMsg("Verificando acesso...");
+  // Lê o miolo do ID token (JWT) sem validar assinatura — serve para exibir o e-mail e barrar
+  // erros óbvios. A validação que vale é a do Google ao emitir o token (só quem a tela de
+  // consentimento permite consegue um) e, quando a planilha estiver ligada, a do Apps Script.
+  function lerIdToken(jwt){
     try{
-      var r = await syncChamar("ping");
-      sessao.email = r.email; sessao.nome = r.nome;
-      var el = document.getElementById("usuarioAtual");
-      if(el) el.textContent = r.email;
-      mostrarApp();
-      await carregarDaPlanilha();
-    }catch(e){
-      sessao.idToken = null;
-      loginMsg(e.message, true);
-      var sair = document.getElementById("btnLoginSair");
-      if(sair) sair.style.display = "";
+      var base = jwt.split(".")[1].replace(/-/g,"+").replace(/_/g,"/");
+      var json = decodeURIComponent(atob(base).split("").map(function(c){
+        return "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2);
+      }).join(""));
+      return JSON.parse(json);
+    }catch(e){ return null; }
+  }
+
+  async function aoReceberCredencial(resposta){
+    var dados = lerIdToken(resposta.credential);
+    if(!dados){ loginMsg("Não foi possível ler o login. Tente novamente.", true); return; }
+    if(dados.aud !== CLIENT_ID){ loginMsg("Login emitido para outro aplicativo.", true); return; }
+    if(String(dados.email_verified) !== "true"){ loginMsg("E-mail da conta Google não verificado.", true); return; }
+    if(Number(dados.exp)*1000 < Date.now()){ loginMsg("Login expirado. Tente novamente.", true); return; }
+
+    sessao.idToken = resposta.credential;
+    sessao.email = (dados.email||"").toLowerCase();
+    sessao.nome = dados.name || "";
+
+    if(SHEETS_URL){
+      loginMsg("Verificando acesso...");
+      try{
+        var r = await syncChamar("ping");
+        sessao.email = r.email || sessao.email;
+      }catch(e){
+        sessao.idToken = null;
+        loginMsg(e.message, true);
+        var sair = document.getElementById("btnLoginSair");
+        if(sair) sair.style.display = "";
+        return;
+      }
     }
+
+    var el = document.getElementById("usuarioAtual");
+    if(el) el.textContent = sessao.email;
+    mostrarApp();
+    if(SHEETS_URL) await carregarDaPlanilha();
   }
 
   function iniciarLogin(){
-    if(!SHEETS_URL || !CLIENT_ID){
-      // sem conexão configurada o painel roda offline, guardando os dados só no navegador
+    if(!CLIENT_ID){
       mostrarApp();
       return;
     }
@@ -3157,7 +3182,7 @@
       if(proc.removidosFisicos > 0) await storageSet(DATA_KEY, state.registrosBrutos);
     }
     renderAll();
-    if(SHEETS_URL && CLIENT_ID){
+    if(CLIENT_ID){
       // a biblioteca do Google carrega de forma assíncrona; espera ela aparecer
       var tentativas = 0;
       var timer = window.setInterval(function(){
