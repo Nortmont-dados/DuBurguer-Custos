@@ -475,6 +475,7 @@
       </div>
       <div class="last-sync" id="lastSync">Nenhum dado importado ainda</div>
       <div class="last-sync" id="usuarioAtual"></div>
+      <div class="last-sync" id="syncStatus"></div>
     </div>
   </header>
 
@@ -788,7 +789,7 @@
   /* =====================================================================
      CONEXÃO — preencha estes dois valores (instruções no TUTORIAL)
      ===================================================================== */
-  var SHEETS_URL = "";   // URL do App da Web do Apps Script (termina em /exec)
+  var SHEETS_URL = "https://script.google.com/macros/s/AKfycbwnWMjxPGYCOs2wmwKUoeyEpSgnGgk-ekWPS1Txx-Smh-95TLa2UO3Uv2B0Pftd9e62/exec";
   var CLIENT_ID  = "646359826891-176bdom8mgnkb1n3k0acu83l9tba01f3.apps.googleusercontent.com";
   /* ===================================================================== */
 
@@ -820,9 +821,15 @@
 
   function syncMsg(txt, erro){
     var el = document.getElementById("cfgSyncMsg");
-    if(!el) return;
-    el.textContent = txt;
-    el.style.color = erro ? "var(--red)" : "var(--text-faint)";
+    if(el){
+      el.textContent = txt;
+      el.style.color = erro ? "var(--red)" : "var(--text-faint)";
+    }
+    var st = document.getElementById("syncStatus");
+    if(st){
+      st.textContent = txt;
+      st.style.color = erro ? "var(--red)" : "";
+    }
   }
 
   async function syncSalvarCfg(){
@@ -860,11 +867,13 @@
       }
     }
     await syncChamar("config", {config: state.config});
-    syncMsg(enviados + " registro(s) gravados na planilha.");
+    syncMsg("Sincronizado · " + enviados + " registro(s) na planilha");
   }
 
   // ao entrar, a planilha manda: é a base comum da equipe
   async function carregarDaPlanilha(){
+    if(!SHEETS_URL) return;
+    syncMsg("Carregando da planilha...");
     try{
       var r = await syncChamar("listar");
       if(r.config) state.config = Object.assign(state.config, r.config);
@@ -873,8 +882,11 @@
       state.registros = proc.calculo;
       await storageSet(DATA_KEY, state.registrosBrutos);
       renderAll();
+      syncMsg(state.registros.length ? "Sincronizado com a planilha" : "Planilha vazia — importe um relatório");
     }catch(e){
+      // sem rede o painel segue com a base local; só não sobrescreve o que já existe
       console.error("falha ao carregar da planilha", e);
+      syncMsg("Offline — usando a base local", true);
       renderAll();
     }
   }
@@ -1422,7 +1434,11 @@
 
     // com a planilha conectada, o relatório importado substitui o do mesmo tipo também lá
     if(SHEETS_URL && sessao.idToken){
-      try{ await syncEnviar(); }catch(e){ console.error("falha ao enviar para a planilha", e); }
+      try{ await syncEnviar(); }
+      catch(e){
+        console.error("falha ao enviar para a planilha", e);
+        syncMsg("Importado localmente, mas não foi possível salvar na planilha", true);
+      }
     }
   }
 
@@ -2753,6 +2769,10 @@
     state.config.importacoes = (state.config.importacoes || []).filter(function(i){ return i.id !== impId; });
     await storageSet(CFG_KEY, state.config);
     renderAll();
+    if(SHEETS_URL && sessao.idToken){
+      try{ await syncChamar("substituir", {registros: state.registrosBrutos}); syncMsg("Sincronizado com a planilha"); }
+      catch(e){ syncMsg("Removido localmente, mas não foi possível atualizar a planilha", true); }
+    }
   }
 
   function renderConfig(){
@@ -3085,8 +3105,14 @@
       if(!confirm("Tem certeza? Todos os dados de pesagem serão perdidos.")) return;
       state.registros = [];
       state.registrosBrutos = [];
+      state.config.importacoes = [];
       await storageSet(DATA_KEY, state.registrosBrutos);
+      await storageSet(CFG_KEY, state.config);
       renderAll();
+      if(SHEETS_URL && sessao.idToken){
+        try{ await syncChamar("limpar"); syncMsg("Planilha zerada"); }
+        catch(e){ syncMsg("Apagado localmente, mas a planilha não foi zerada", true); }
+      }
     });
   }
 
