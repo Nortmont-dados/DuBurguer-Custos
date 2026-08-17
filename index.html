@@ -486,6 +486,7 @@
     <button class="tab-btn" data-tab="periodos">Custo por Período</button>
     <button class="tab-btn" data-tab="produtos">Produtos</button>
     <button class="tab-btn" data-tab="grupos">Grupos (Receita)</button>
+    <button class="tab-btn" data-tab="pendentes">Pendentes <span class="count-tag" id="tabPendCount" style="display:none;"></span></button>
     <button class="tab-btn" data-tab="historico">Base de Dados</button>
     <button class="tab-btn" data-tab="config">Configurações</button>
   </nav>
@@ -584,6 +585,44 @@
           </tr>
         </thead>
         <tbody id="gruposBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- PENDENTES -->
+  <section class="tab-panel" id="tab-pendentes">
+    <p class="section-hint" style="margin-bottom:var(--sp-3);">
+      Pesagens que vieram sem código de receita na origem, agrupadas por dia e lote.
+      Defina o grupo aqui para elas entrarem nos cálculos das demais abas. A correção fica salva e
+      é reaplicada a cada importação — se o código for corrigido no sistema de pesagem, ele prevalece.
+    </p>
+    <div class="toolbar-row">
+      <div class="filters" style="margin-bottom:0; align-items:center;">
+        <label style="flex-direction:row; align-items:center; gap:8px;">
+          <input type="checkbox" id="pendSelAll"> Selecionar todos
+        </label>
+        <label>Definir para os selecionados
+          <select id="pendGrupoLote"><option value="">Escolha um grupo...</option></select>
+        </label>
+        <button class="btn" id="btnPendAplicar">Aplicar em lote</button>
+      </div>
+      <span class="count-tag" id="pendCount"></span>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:36px;"></th>
+            <th>Data</th>
+            <th>Lote</th>
+            <th>Produto</th>
+            <th class="num">Peso (kg)</th>
+            <th class="num">Valor (R$)</th>
+            <th class="num">R$/kg</th>
+            <th style="min-width:200px;">Grupo</th>
+          </tr>
+        </thead>
+        <tbody id="pendentesBody"></tbody>
       </table>
     </div>
   </section>
@@ -975,6 +1014,22 @@
   // mesma coisa: "08/160", "08//160", " 08.160 ", "160/08", "O8.160costela", "08/50 f", "08/50 gurme".
   // Sem canonizar, cada variação virava um grupo separado com 1 registro e o painel ficava fragmentado.
   // Regra: número pequeno (<=20) = família da receita; número grande (>=40) = gramatura; o resto vira sufixo.
+  // Correção manual de grupo, feita na aba Pendentes. Fica salva por pesagem (chave do registro)
+  // e é reaplicada a cada importação — assim reimportar o mesmo relatório não desfaz o trabalho.
+  // Se o código for corrigido na origem, o valor do arquivo prevalece e a correção manual é
+  // descartada, para a planilha continuar sendo a fonte da verdade.
+  function aplicarReclassificacao(records){
+    var mapa = state.config.reclassificacoes || {};
+    records.forEach(function(r){
+      var novo = mapa[r._key];
+      if(!novo) return;
+      if(r.grupo && r.grupo !== "SEM GRUPO") return;
+      r.grupo = novo;
+      r.grupoManual = true;
+    });
+    return records;
+  }
+
   function normalizeReceita(raw){
     if(raw === null || raw === undefined) return "SEM GRUPO";
     var s = stripAccents(String(raw)).toUpperCase();
@@ -1379,6 +1434,7 @@
   // A base gravada mantém os DOIS níveis; o descarte acontece só no processamento, senão
   // trocar a fonte em Configurações não teria como recuperar o nível descartado antes.
   function processarBase(bruta){
+    aplicarReclassificacao(bruta);
     var dd = dedupFisico(bruta);
     herdarReceitaDoLote(dd.registros);
     var dn = dedupNivel(dd.registros);
@@ -2732,6 +2788,85 @@
     }).join("");
   }
 
+  function gruposDisponiveis(){
+    var set = {};
+    state.registros.forEach(function(r){
+      if(r.grupo && r.grupo !== "SEM GRUPO") set[r.grupo] = true;
+    });
+    return Object.keys(set).sort();
+  }
+
+  function registrosPendentes(){
+    var base = (state.registrosBrutos && state.registrosBrutos.length) ? state.registrosBrutos : state.registros;
+    return base.filter(function(r){ return !r.grupo || r.grupo === "SEM GRUPO"; })
+               .sort(function(a,b){ return (b.dataTs||0) - (a.dataTs||0); });
+  }
+
+  function opcoesGrupo(sel){
+    return '<option value="">—</option>' + gruposDisponiveis().map(function(g){
+      var nome = nomeReceita(g, null);
+      return '<option value="'+escapeAttr(g)+'"'+(g===sel?' selected':'')+'>'+
+             escapeHtml(g) + (nome ? " · " + escapeHtml(nome) : "") + '</option>';
+    }).join("");
+  }
+
+  function renderPendentes(){
+    var body = document.getElementById("pendentesBody");
+    if(!body) return;
+    var lista = registrosPendentes();
+
+    var tag = document.getElementById("tabPendCount");
+    if(tag){
+      tag.textContent = lista.length;
+      tag.style.display = lista.length ? "" : "none";
+    }
+    var cnt = document.getElementById("pendCount");
+    if(cnt) cnt.textContent = lista.length + " pesagem(ns) sem grupo";
+
+    var sel = document.getElementById("pendGrupoLote");
+    if(sel) sel.innerHTML = '<option value="">Escolha um grupo...</option>' + opcoesGrupo("");
+
+    if(lista.length === 0){
+      body.innerHTML = '<tr><td colspan="8" class="dash" style="text-align:center; padding:30px;">Nenhuma pesagem pendente — todas têm grupo definido.</td></tr>';
+      return;
+    }
+
+    body.innerHTML = lista.map(function(r){
+      return '<tr data-pkey="'+escapeAttr(r._key)+'">'+
+        '<td><input type="checkbox" class="pend-check"></td>'+
+        '<td>'+fmtDateShort(r.dataTs)+'</td>'+
+        '<td>'+(r.lote!==null&&r.lote!==undefined?escapeHtml(String(r.lote)):'<span class="dash">—</span>')+'</td>'+
+        '<td class="prod-name">'+escapeHtml(r.descricao || "—")+'</td>'+
+        '<td class="num">'+(r.pesoCalculado!==null?fmtKg(r.pesoCalculado):'<span class="dash">—</span>')+'</td>'+
+        '<td class="num">'+(r.precoPesagem!==null?fmtMoney(r.precoPesagem):'<span class="dash">—</span>')+'</td>'+
+        '<td class="num">'+(r.custoKg!==null?fmtMoney(r.custoKg):'<span class="dash">—</span>')+'</td>'+
+        '<td><select class="pend-grupo">'+opcoesGrupo("")+'</select></td>'+
+        '</tr>';
+    }).join("");
+  }
+
+  async function definirGrupos(pares){
+    if(!pares.length) return;
+    state.config.reclassificacoes = state.config.reclassificacoes || {};
+    pares.forEach(function(p){ state.config.reclassificacoes[p.chave] = p.grupo; });
+    await storageSet(CFG_KEY, state.config);
+
+    var base = (state.registrosBrutos && state.registrosBrutos.length) ? state.registrosBrutos : state.registros;
+    var proc = processarBase(base);
+    state.registrosBrutos = proc.bruta;
+    state.registros = proc.calculo;
+    await storageSet(DATA_KEY, state.registrosBrutos);
+    renderAll();
+
+    if(SHEETS_URL && sessao.idToken){
+      try{
+        await syncChamar("substituir", {registros: state.registrosBrutos});
+        await syncChamar("config", {config: state.config});
+        syncMsg("Sincronizado com a planilha");
+      }catch(e){ syncMsg("Salvo localmente, mas não foi possível atualizar a planilha", true); }
+    }
+  }
+
   function renderImportacoes(){
     var wrap = document.getElementById("cfgImportacoes");
     if(!wrap) return;
@@ -2812,6 +2947,7 @@
     if(hasData){
       renderProdutos();
       renderGrupos();
+      renderPendentes();
       renderHistorico();
       renderPeriodos();
       renderConfig();
@@ -2858,6 +2994,36 @@
   }
 
   function wireEvents(){
+    // seleção em massa
+    ligaSeExistir("pendSelAll", "change", function(e){
+      Array.prototype.forEach.call(document.querySelectorAll("#pendentesBody .pend-check"), function(c){
+        c.checked = e.target.checked;
+      });
+    });
+
+    // atribuição unitária: escolher na linha aplica na hora
+    ligaSeExistir("pendentesBody", "change", function(e){
+      var sel = e.target.closest(".pend-grupo");
+      if(!sel || !sel.value) return;
+      var tr = sel.closest("tr");
+      definirGrupos([{chave: tr.getAttribute("data-pkey"), grupo: sel.value}]);
+    });
+
+    ligaSeExistir("btnPendAplicar", "click", function(){
+      var grupo = document.getElementById("pendGrupoLote").value;
+      if(!grupo){ alert("Escolha o grupo que será aplicado."); return; }
+      var pares = [];
+      Array.prototype.forEach.call(document.querySelectorAll("#pendentesBody tr"), function(tr){
+        var c = tr.querySelector(".pend-check");
+        if(c && c.checked) pares.push({chave: tr.getAttribute("data-pkey"), grupo: grupo});
+      });
+      if(!pares.length){ alert("Selecione ao menos uma pesagem."); return; }
+      if(!confirm("Definir o grupo " + grupo + " para " + pares.length + " pesagem(ns)?")) return;
+      var sa = document.getElementById("pendSelAll");
+      if(sa) sa.checked = false;
+      definirGrupos(pares);
+    });
+
     ligaSeExistir("btnLoginSair", "click", function(){
       sessao.idToken = null;
       if(window.google && google.accounts) google.accounts.id.disableAutoSelect();
