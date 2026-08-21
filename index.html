@@ -2270,14 +2270,18 @@
     }
     var at = soma(base), an = soma(prev);
 
-    var f = state.filters;
-    var janelaTxt;
-    if(f.execDataIni || f.execDataFim){
-      janelaTxt = (f.execDataIni ? fmtDateShort(new Date(f.execDataIni+"T00:00:00").getTime()) : "início") + " a " +
-                  (f.execDataFim ? fmtDateShort(new Date(f.execDataFim+"T00:00:00").getTime()) : "fim");
-    } else {
-      var datas = state.registros.map(function(r){return r.dataTs;}).filter(Boolean);
-      janelaTxt = datas.length ? (fmtDateShort(Math.min.apply(null,datas))+" a "+fmtDateShort(Math.max.apply(null,datas))+" (histórico completo)") : "período não identificado";
+    // Mostra o intervalo dos dados EXISTENTES na janela, não os limites do filtro: com o filtro
+    // aberto além do que a base cobre, exibir "23/05 a 20/08" dá a impressão de que 30 e 90 dias
+    // trazem períodos diferentes quando os números são idênticos por não haver dado mais antigo.
+    var datasNaJanela = base.map(function(r){return r.dataTs;}).filter(Boolean);
+    var janelaTxt = datasNaJanela.length
+      ? fmtDateShort(Math.min.apply(null, datasNaJanela)) + " a " + fmtDateShort(Math.max.apply(null, datasNaJanela))
+      : "sem pesagem no período";
+
+    var todasDatas = state.registros.map(function(r){return r.dataTs;}).filter(Boolean);
+    if(datasNaJanela.length && todasDatas.length &&
+       Math.min.apply(null, datasNaJanela) <= Math.min.apply(null, todasDatas)){
+      janelaTxt += " &middot; início da base";
     }
 
     function deltaTxt(atual, anterior, unidade){
