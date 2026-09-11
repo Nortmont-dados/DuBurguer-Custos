@@ -1038,10 +1038,10 @@
     s = s.replace(/[.,;\-_]/g, "/").replace(/\/+/g, "/").replace(/\s+/g, " ").trim();
 
     var sufixos = [];
-    if(/COSTELA/.test(s)) sufixos.push("COSTELA");
+    if(/COS/.test(s)) sufixos.push("COSTELA");
     // grafias vistas na base: GURME, GORMET, GOURMET
     if(/G[OU]U?RM[EO]T?E?/.test(s)) sufixos.push("GURME");
-    var letra = s.replace(/COSTELA|G[OU]U?RM[EO]T?E?/g, "").match(/(?:^|[\s\/])([FP])(?=$|[\s\/])/);
+    var letra = s.replace(/COS[A-Z]*|G[OU]U?RM[EO]T?E?/g, "").match(/(?:^|[\s\/])([FP])(?=$|[\s\/])/);
     if(letra) sufixos.push(letra[1]);
 
     var nums = (s.match(/\d+/g) || []).map(Number);
@@ -1080,10 +1080,10 @@
   }
 
   // mapeamento código de receita (número antes da "/") -> nome comercial.
-  // "costela" na descrição tem prioridade sobre o código, pois pode aparecer sob qualquer grupo.
+  // "COS" (COS, COST, COSTELA...) no código ou na descrição tem prioridade sobre o código, pois pode aparecer sob qualquer grupo.
   function nomeReceita(grupo, descricao){
     var alvo = String(grupo||"") + " " + String(descricao||"");
-    if(/costela/i.test(alvo)) return "Costela";
+    if(/cos/i.test(alvo)) return "Costela";
     // Gourmet é linha própria no controle da fábrica, não uma variação de Tradicional
     if(/g[ou]u?rm[eo]t?e?/i.test(alvo)) return "Gourmet";
     var m = String(grupo||"").match(/(\d+)\s*\//);
