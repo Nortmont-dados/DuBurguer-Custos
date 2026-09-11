@@ -1434,6 +1434,12 @@
   // A base gravada mantém os DOIS níveis; o descarte acontece só no processamento, senão
   // trocar a fonte em Configurações não teria como recuperar o nível descartado antes.
   function processarBase(bruta){
+    // o grupo gravado na base (local ou planilha) reflete a regra da época da importação;
+    // recalcular a partir do código bruto faz toda mudança de regra valer sem reimportar
+    bruta.forEach(function(r){
+      if(r.codigoReceitaRaw === null || r.codigoReceitaRaw === undefined || String(r.codigoReceitaRaw).trim() === "") return;
+      r.grupo = normalizeReceita(r.codigoReceitaRaw);
+    });
     aplicarReclassificacao(bruta);
     var dd = dedupFisico(bruta);
     herdarReceitaDoLote(dd.registros);
