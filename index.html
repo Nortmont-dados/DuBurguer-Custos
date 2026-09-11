@@ -1358,6 +1358,10 @@
     var ajustados = 0;
     records.forEach(function(r){
       if(nivelDe(r) !== "item") return;
+      // pesagem que veio SEM código na origem não herda o código do lote: ela precisa aparecer
+      // na aba Pendentes para ser categorizada à mão. Herdar aqui a fazia sumir da fila e ainda
+      // gravava o código herdado na base, apagando para sempre o "veio sem código".
+      if(r.grupo === "SEM GRUPO") return;
       var dia = diaISO(r.dataTs);
       if(dia === null || r.lote === null || r.lote === "") return;
       var lote = mapa[dia+"|"+r.lote];
