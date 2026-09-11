@@ -1080,7 +1080,7 @@
   }
 
   // mapeamento código de receita (número antes da "/") -> nome comercial.
-  // "COS" (COS, COST, COSTELA...) no código ou na descrição tem prioridade sobre o código, pois pode aparecer sob qualquer grupo.
+  // "costela" na descrição tem prioridade sobre o código, pois pode aparecer sob qualquer grupo.
   function nomeReceita(grupo, descricao){
     var alvo = String(grupo||"") + " " + String(descricao||"");
     if(/cos/i.test(alvo)) return "Costela";
@@ -1358,18 +1358,13 @@
     var ajustados = 0;
     records.forEach(function(r){
       if(nivelDe(r) !== "item") return;
-      // pesagem que veio SEM código na origem não herda o código do lote: ela precisa aparecer
-      // na aba Pendentes para ser categorizada à mão. Herdar aqui a fazia sumir da fila e ainda
-      // gravava o código herdado na base, apagando para sempre o "veio sem código".
-      if(r.grupo === "SEM GRUPO") return;
+      if(r.grupo === "SEM GRUPO") return; // sem código na origem: vai para Pendentes, não herda
       var dia = diaISO(r.dataTs);
       if(dia === null || r.lote === null || r.lote === "") return;
       var lote = mapa[dia+"|"+r.lote];
       if(!lote || lote.grupo === r.grupo) return;
       r.grupoItem = r.grupo;          // preserva o código original da pesagem
       r.grupo = lote.grupo;
-      // codigoReceitaRaw NÃO é sobrescrito: ele é o que veio na origem e fica gravado na base.
-      // Trocá-lo pelo código do lote apagava para sempre o "esta pesagem veio sem código".
       ajustados++;
     });
     return ajustados;
@@ -1439,19 +1434,12 @@
   // A base gravada mantém os DOIS níveis; o descarte acontece só no processamento, senão
   // trocar a fonte em Configurações não teria como recuperar o nível descartado antes.
   function processarBase(bruta){
-    // O grupo vem gravado em cada registro desde a importação que o criou. Quando a base é
-    // recarregada (planilha ou armazenamento local), ela traz o grupo calculado pela regra da
-    // época — por isso mudança de regra não aparecia sem reimportar, e pesagens sem código
-    // continuavam fora de Pendentes. Recalcular aqui, a partir do código que veio na origem,
-    // faz a regra atual valer sempre. Registros gravados sem esse campo ficam como estão.
+    // grupo sempre recalculado do código de origem: base recarregada da planilha traz o grupo
+    // da regra antiga, e sem isso nem "COS" nem Pendentes refletem a regra atual
     bruta.forEach(function(r){
       var raw = r.codigoReceitaRaw;
       if(raw === undefined) return;
-      if(raw === null || /^\s*(null|undefined|nan)?\s*$/i.test(String(raw))){
-        r.grupo = "SEM GRUPO";
-      } else {
-        r.grupo = normalizeReceita(raw);
-      }
+      r.grupo = (raw === null || /^\s*(null|undefined|nan)?\s*$/i.test(String(raw))) ? "SEM GRUPO" : normalizeReceita(raw);
       r.grupoManual = false;
     });
     aplicarReclassificacao(bruta);
