@@ -1239,6 +1239,9 @@
       peso: toNum(row.peso),
       pendente: toNum(row.pendente) || 0,
       codigoReceitaRaw: (row.codigoReceita !== undefined && row.codigoReceita !== null) ? String(row.codigoReceita) : null,
+      // cópia intocável do que veio na origem: herdarReceitaDoLote sobrescreve codigoReceitaRaw,
+      // e sem este campo o "veio sem código" se perde na primeira gravação da base
+      codigoReceitaOrig: (row.codigoReceita !== undefined && row.codigoReceita !== null) ? String(row.codigoReceita) : "",
       grupo: grupo,
       dataTs: ts,
       dataRaw: row.dataCadastro !== undefined ? String(row.dataCadastro) : null,
@@ -1358,6 +1361,9 @@
     var ajustados = 0;
     records.forEach(function(r){
       if(nivelDe(r) !== "item") return;
+      // pesagem sem código na origem não herda: ela precisa passar pela aba Pendentes para
+      // ser categorizada à mão. Categorização manual também não é sobrescrita pelo lote.
+      if(r.grupo === "SEM GRUPO" || r.grupoManual) return;
       var dia = diaISO(r.dataTs);
       if(dia === null || r.lote === null || r.lote === "") return;
       var lote = mapa[dia+"|"+r.lote];
@@ -1444,8 +1450,12 @@
           ? "id:" + r.id
           : ["fb", r.codigoProduto, r.dataRaw, r.pesoCalculado, r.precoPesagem].join("|");
       }
-      if(r.codigoReceitaRaw === null || r.codigoReceitaRaw === undefined || String(r.codigoReceitaRaw).trim() === "") return;
-      r.grupo = normalizeReceita(r.codigoReceitaRaw);
+      if(r.codigoReceitaOrig === undefined || r.codigoReceitaOrig === null){
+        // base gravada antes deste campo existir: o melhor palpite é o código bruto
+        r.codigoReceitaOrig = (r.codigoReceitaRaw === null || r.codigoReceitaRaw === undefined) ? "" : String(r.codigoReceitaRaw);
+      }
+      r.grupo = normalizeReceita(r.codigoReceitaOrig);
+      r.grupoManual = false;
     });
     aplicarReclassificacao(bruta);
     var dd = dedupFisico(bruta);
