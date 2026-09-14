@@ -687,6 +687,7 @@
           <div class="preset-buttons" id="granularidadeButtons">
             <button class="preset-btn active" data-gran="semana">Semana</button>
             <button class="preset-btn" data-gran="dia">Dia</button>
+            <button class="preset-btn" data-gran="mes">Mês</button>
           </div>
         </div>
         <div class="preset-group">
@@ -1884,6 +1885,9 @@
 
   var MES_NOMES = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
 
+  var GRAN_NOMES = {dia:"dia", semana:"semana", mes:"mês"};
+  function nomeGran(){ return GRAN_NOMES[state.config.granularidade] || "semana"; }
+
   function computeJanela(){
     var ano = resolveAno();
     var mes = state.config.mes;
@@ -1898,6 +1902,14 @@
     if(tss.length===0) return null;
     var maxTs = Math.max.apply(null, tss);
     var preset = state.config.periodoPreset || {tipo:"semana"};
+    // na leitura mensal o recorte de 7/15/30 dias devolveria um único mês e a comparação
+    // entre pontos deixa de existir: a janela passa a ser todo o histórico do ano selecionado
+    if((state.config.granularidade||"semana")==="mes"){
+      var minTs = Math.min.apply(null, tss);
+      var iniAno = new Date(minTs); iniAno.setHours(0,0,0,0);
+      var fimAno = new Date(maxTs); fimAno.setHours(0,0,0,0);
+      return { ini: iniAno, fim: fimAno };
+    }
     if(preset.tipo==="custom" && preset.ini && preset.fim){
       return { ini: new Date(preset.ini+"T00:00:00"), fim: new Date(preset.fim+"T00:00:00") };
     }
@@ -1912,10 +1924,25 @@
     var janela = computeJanela();
     if(!janela) return [];
     var granularidade = state.config.granularidade || "semana";
-    var diasBucket = granularidade==="dia" ? 1 : 7;
     var anoCurto = resolveAno() !== "todos";
     var fmtLbl = anoCurto ? fmtDDMM : fmtDateShort;
     var buckets = [];
+    // o mês é calendário, não bloco de 30 dias: fevereiro e março têm que fechar no dia certo,
+    // senão o custo do kg do mês compara períodos de tamanhos diferentes
+    if(granularidade==="mes"){
+      var cursorM = new Date(janela.ini.getFullYear(), janela.ini.getMonth(), 1);
+      while(cursorM.getTime() <= janela.fim.getTime()){
+        var mIni = new Date(Math.max(cursorM.getTime(), janela.ini.getTime()));
+        var ultimoDia = new Date(cursorM.getFullYear(), cursorM.getMonth()+1, 0);
+        var mFim = new Date(Math.min(ultimoDia.getTime(), janela.fim.getTime()));
+        mIni.setHours(0,0,0,0); mFim.setHours(0,0,0,0);
+        var lblM = MES_NOMES[cursorM.getMonth()] + (anoCurto ? "" : "/"+String(cursorM.getFullYear()).slice(-2));
+        buckets.push({ id: toLocalISODate(mIni), label: lblM, ini: toLocalISODate(mIni), fim: toLocalISODate(mFim) });
+        cursorM = new Date(cursorM.getFullYear(), cursorM.getMonth()+1, 1);
+      }
+      return buckets;
+    }
+    var diasBucket = granularidade==="dia" ? 1 : 7;
     var cursor = new Date(janela.ini.getTime());
     while(cursor.getTime() <= janela.fim.getTime()){
       var bIni = new Date(cursor.getTime());
@@ -2614,8 +2641,11 @@
     mesSel.value = state.config.mes || "todos";
     var mesAtivo = mesSel.value!=="todos" && anoAtual!=="todos";
 
+    // na visão mensal a janela é o ano inteiro; manter os botões de 7/15/30 dias visíveis
+    // sugeriria um recorte que não é aplicado
+    var granMensal = granularidade==="mes" && !mesAtivo;
     var periodoGroup = document.getElementById("presetButtons").closest(".preset-group");
-    if(periodoGroup) periodoGroup.style.display = mesAtivo ? "none" : "";
+    if(periodoGroup) periodoGroup.style.display = (mesAtivo || granMensal) ? "none" : "";
 
     document.querySelectorAll("#presetButtons .preset-btn").forEach(function(b){
       b.classList.toggle("active", b.getAttribute("data-tipo")===preset.tipo);
@@ -2624,7 +2654,7 @@
       b.classList.toggle("active", b.getAttribute("data-gran")===granularidade);
     });
     var customBox = document.getElementById("presetCustom");
-    if(preset.tipo==="custom" && !mesAtivo){
+    if(preset.tipo==="custom" && !mesAtivo && !granMensal){
       customBox.classList.add("show");
       if(preset.ini) document.getElementById("customIni").value = preset.ini;
       if(preset.fim) document.getElementById("customFim").value = preset.fim;
@@ -2636,7 +2666,7 @@
     var rangeEl = document.getElementById("presetRangeLabel");
     if(buckets.length>0){
       var janela = computeJanela();
-      var unidade = granularidade==="dia" ? "dia(s)" : "semana(s)";
+      var unidade = granularidade==="dia" ? "dia(s)" : (granularidade==="mes" ? "mês(es)" : "semana(s)");
       var pulados = buckets.length - comDados;
       rangeEl.textContent = "Janela: "+fmtDateShort(janela.ini.getTime())+" a "+fmtDateShort(janela.fim.getTime())+" · "+comDados+" "+unidade+" com pesagem no gráfico"+(pulados>0?" ("+pulados+" sem pesagem, ocultado"+(pulados>1?"s":"")+")":"");
     } else {
@@ -2679,8 +2709,8 @@
     }
     var temVariosBuckets = data.periodos.length>1;
     hintEl.textContent = metric==="preco"
-      ? "Preço médio do kg (valor ÷ peso) de cada grupo, em cada "+(state.config.granularidade==="dia"?"dia":"semana")+" dentro do período selecionado. Verde quando o valor cai em relação ao ponto anterior, vermelho quando sobe."+(temVariosBuckets?" \"Volatilidade\" mostra o quanto o preço oscilou entre os pontos, pra cima ou pra baixo.":"")
-      : (metric==="kg" ? "Quilos processados de cada grupo, por "+(state.config.granularidade==="dia"?"dia":"semana")+". Verde quando cai em relação ao ponto anterior, vermelho quando sobe." : "Valor total pago (R$) por cada grupo, por "+(state.config.granularidade==="dia"?"dia":"semana")+". Verde quando cai em relação ao ponto anterior, vermelho quando sobe.");
+      ? "Preço médio do kg (valor ÷ peso) de cada grupo, em cada "+nomeGran()+" dentro do período selecionado. Verde quando o valor cai em relação ao ponto anterior, vermelho quando sobe."+(temVariosBuckets?" \"Volatilidade\" mostra o quanto o preço oscilou entre os pontos, pra cima ou pra baixo.":"")
+      : (metric==="kg" ? "Quilos processados de cada grupo, por "+nomeGran()+". Verde quando cai em relação ao ponto anterior, vermelho quando sobe." : "Valor total pago (R$) por cada grupo, por "+nomeGran()+". Verde quando cai em relação ao ponto anterior, vermelho quando sobe.");
 
     var threshold = state.config.threshold || 8;
     var head = '<th class="sticky-col">Grupo</th>' + data.periodos.map(function(p){ return '<th class="num">'+escapeHtml(p.label)+'</th>'; }).join('') +
@@ -2735,8 +2765,8 @@
     }
     var temVariosBuckets = data.periodos.length>1;
     hintEl.textContent = metric==="preco"
-      ? "Preço médio do kg (valor ÷ peso) de cada corte, em cada "+(state.config.granularidade==="dia"?"dia":"semana")+" dentro do período selecionado. Verde quando o valor cai em relação ao ponto anterior, vermelho quando sobe."+(temVariosBuckets?" \"Volatilidade\" mostra o quanto o preço oscilou entre os pontos, pra cima ou pra baixo.":"")
-      : (metric==="kg" ? "Quilos processados de cada corte, por "+(state.config.granularidade==="dia"?"dia":"semana")+". Verde quando cai em relação ao ponto anterior, vermelho quando sobe." : "Valor total pago (R$) por cada corte, por "+(state.config.granularidade==="dia"?"dia":"semana")+". Verde quando cai em relação ao ponto anterior, vermelho quando sobe.");
+      ? "Preço médio do kg (valor ÷ peso) de cada corte, em cada "+nomeGran()+" dentro do período selecionado. Verde quando o valor cai em relação ao ponto anterior, vermelho quando sobe."+(temVariosBuckets?" \"Volatilidade\" mostra o quanto o preço oscilou entre os pontos, pra cima ou pra baixo.":"")
+      : (metric==="kg" ? "Quilos processados de cada corte, por "+nomeGran()+". Verde quando cai em relação ao ponto anterior, vermelho quando sobe." : "Valor total pago (R$) por cada corte, por "+nomeGran()+". Verde quando cai em relação ao ponto anterior, vermelho quando sobe.");
 
     var threshold = state.config.threshold || 8;
     var head = '<th class="sticky-col">Corte</th>' + data.periodos.map(function(p){ return '<th class="num">'+escapeHtml(p.label)+'</th>'; }).join('') +
