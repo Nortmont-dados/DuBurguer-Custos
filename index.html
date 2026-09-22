@@ -1917,7 +1917,18 @@
     var dias = diasMap[preset.tipo] || 7;
     var fim = new Date(maxTs); fim.setHours(0,0,0,0);
     var ini = new Date(fim.getTime()); ini.setDate(ini.getDate()-(dias-1));
+    // "últimos N dias" começa no dia da semana que a última pesagem ditar: cada importação nova
+    // deslocava o corte das semanas. Na visão semanal a janela recua até a segunda-feira,
+    // para toda coluna ser uma semana de calendário completa (exceto a semana em andamento)
+    if((state.config.granularidade||"semana")==="semana") ini = inicioSemana(ini);
     return { ini: ini, fim: fim };
+  }
+
+  // segunda-feira da semana de "d" (getDay: domingo=0, então domingo recua 6 dias)
+  function inicioSemana(d){
+    var x = new Date(d.getTime()); x.setHours(0,0,0,0);
+    x.setDate(x.getDate() - ((x.getDay()+6)%7));
+    return x;
   }
 
   function computeBucketsAtivos(){
@@ -1942,7 +1953,25 @@
       }
       return buckets;
     }
-    var diasBucket = granularidade==="dia" ? 1 : 7;
+    // semana de calendário (segunda a domingo). Em janela fixa (mês escolhido ou período
+    // específico) as semanas das pontas saem parciais, cortadas nos limites que o usuário definiu
+    if(granularidade==="semana"){
+      var cursorS = inicioSemana(janela.ini);
+      while(cursorS.getTime() <= janela.fim.getTime()){
+        var sIni = new Date(Math.max(cursorS.getTime(), janela.ini.getTime()));
+        var domingo = new Date(cursorS.getTime()); domingo.setDate(domingo.getDate()+6);
+        var sFim = new Date(Math.min(domingo.getTime(), janela.fim.getTime()));
+        sIni.setHours(0,0,0,0); sFim.setHours(0,0,0,0);
+        // semana incompleta ao lado de semanas cheias precisa se identificar: 3 dias de pesagem
+        // comparados com 7 parecem variação de custo quando é só falta de dias
+        var parcialS = sIni.getTime()!==cursorS.getTime() || sFim.getTime()!==domingo.getTime();
+        buckets.push({ id: toLocalISODate(sIni), label: fmtLbl(sIni.getTime())+" a "+fmtLbl(sFim.getTime())+(parcialS?" (parcial)":""),
+                       ini: toLocalISODate(sIni), fim: toLocalISODate(sFim), parcial: parcialS });
+        cursorS.setDate(cursorS.getDate()+7);
+      }
+      return buckets;
+    }
+    var diasBucket = 1;
     var cursor = new Date(janela.ini.getTime());
     while(cursor.getTime() <= janela.fim.getTime()){
       var bIni = new Date(cursor.getTime());
@@ -2668,7 +2697,7 @@
       var janela = computeJanela();
       var unidade = granularidade==="dia" ? "dia(s)" : (granularidade==="mes" ? "mês(es)" : "semana(s)");
       var pulados = buckets.length - comDados;
-      rangeEl.textContent = "Janela: "+fmtDateShort(janela.ini.getTime())+" a "+fmtDateShort(janela.fim.getTime())+" · "+comDados+" "+unidade+" com pesagem no gráfico"+(pulados>0?" ("+pulados+" sem pesagem, ocultado"+(pulados>1?"s":"")+")":"");
+      rangeEl.textContent = "Janela: "+fmtDateShort(janela.ini.getTime())+" a "+fmtDateShort(janela.fim.getTime())+" · "+comDados+" "+unidade+" com pesagem no gráfico"+(pulados>0?" ("+pulados+" sem pesagem, ocultado"+(pulados>1?"s":"")+")":"")+(granularidade==="semana"?" · semanas de segunda a domingo":"");
     } else {
       rangeEl.textContent = "Importe um relatório para calcular o período.";
     }
